@@ -1,0 +1,183 @@
+import os
+import numpy as np
+from glob import glob
+import cv2
+import tensorflow as tf
+from sklearn.model_selection import train_test_split
+from tensorflow.keras import layers, models, callbacks, applications, regularizers
+
+
+data_dir_train_antiviral = "/kaggle/input/spectrogram-images-rhythm-dynamics-ennavia-a/spectrogram images/antiviral training images"
+data_dir_test_antiviral = "/kaggle/input/spectrogram-images-rhythm-dynamics-ennavia-a/spectrogram images/antiviral testing images"
+
+data_dir_train_non_antiviral = "/kaggle/input/spectrogram-images-rhythm-dynamics-ennavia-a/spectrogram images/exp-non-antiviral training images"
+data_dir_test_non_antiviral = "/kaggle/input/spectrogram-images-rhythm-dynamics-ennavia-a/spectrogram images/exp-non-antiviral testing images"
+
+IMG_HEIGHT, IMG_WIDTH = 299, 299
+SEED = 42
+
+
+
+def load_images_from_directory(directory, label):
+    images, labels = [], []
+    files = glob(os.path.join(directory, "*.png"))
+    
+    for file in files:
+        img = cv2.imread(file)
+        if img is None:
+            continue
+        img = cv2.resize(img, (IMG_WIDTH, IMG_HEIGHT))
+        img = img.astype("float32") / 255.0
+        images.append(img)
+        labels.append(label)
+    
+    return np.array(images), np.array(labels)
+
+
+
+
+X_antiviral_train, y_antiviral_train = load_images_from_directory(data_dir_train_antiviral, label=1)
+X_antiviral_test, y_antiviral_test = load_images_from_directory(data_dir_test_antiviral, label=1)
+
+# Load all non-antiviral images from both old train and test folders
+X_non_antiviral_train, y_non_antiviral_train = load_images_from_directory(data_dir_train_non_antiviral, label=0)
+X_non_antiviral_test, y_non_antiviral_test = load_images_from_directory(data_dir_test_non_antiviral, label=0)
+
+
+
+
+
+X_all = np.concatenate(
+    (
+        X_antiviral_train,
+        X_antiviral_test,
+        X_non_antiviral_train,
+        X_non_antiviral_test
+    ),
+    axis=0
+)
+
+y_all = np.concatenate(
+    (
+        y_antiviral_train,
+        y_antiviral_test,
+        y_non_antiviral_train,
+        y_non_antiviral_test
+    ),
+    axis=0
+)
+
+print(f"Total samples: {len(X_all)}")
+print(f"Total labels: {len(y_all)}")
+
+
+
+X_train, X_temp, y_train, y_temp = train_test_split(
+    X_all,
+    y_all,
+    test_size=0.30,
+    random_state=SEED,
+    stratify=y_all,
+    shuffle=True
+)
+
+X_val, X_test, y_val, y_test = train_test_split(
+    X_temp,
+    y_temp,
+    test_size=0.50,
+    random_state=SEED,
+    stratify=y_temp,
+    shuffle=True
+)
+
+print("\nDataset split:")
+print(f"Training samples   : {len(X_train)} ({len(X_train)/len(X_all)*100:.2f}%)")
+print(f"Validation samples : {len(X_val)} ({len(X_val)/len(X_all)*100:.2f}%)")
+print(f"Testing samples    : {len(X_test)} ({len(X_test)/len(X_all)*100:.2f}%)")
+
+print("\nClass distribution:")
+print(f"Train - Antiviral: {np.sum(y_train == 1)}, Non-antiviral: {np.sum(y_train == 0)}")
+print(f"Val   - Antiviral: {np.sum(y_val == 1)}, Non-antiviral: {np.sum(y_val == 0)}")
+print(f"Test  - Antiviral: {np.sum(y_test == 1)}, Non-antiviral: {np.sum(y_test == 0)}")
+
+
+
+def build_inception_model(input_shape):
+    base_model = applications.InceptionV3(
+        weights='imagenet',
+        include_top=False,
+        input_shape=input_shape
+    )
+
+    # Freeze early layers
+    for layer in base_model.layers[:280]:
+        layer.trainable = False
+
+    inputs = layers.Input(shape=input_shape)
+    x = base_model(inputs, training=False)
+    x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Dense(256, activation='relu', kernel_regularizer=regularizers.l2(0.01))(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(0.5)(x)
+    outputs = layers.Dense(1, activation='sigmoid')(x)
+
+    model = models.Model(inputs, outputs)
+
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+        initial_learning_rate=0.0001,
+        decay_steps=5000,
+        decay_rate=0.9,
+        staircase=True
+    )
+
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+
+    model.compile(
+        optimizer=optimizer,
+        loss='binary_crossentropy',
+        metrics=['accuracy']
+    )
+    return model
+
+
+
+model = build_inception_model((IMG_HEIGHT, IMG_WIDTH, 3))
+
+early_stopping = callbacks.EarlyStopping(
+    monitor='val_loss',
+    patience=25,
+    restore_best_weights=True
+)
+
+model_checkpoint = callbacks.ModelCheckpoint(
+    "best_inception_model.keras",
+    monitor='val_accuracy',
+    save_best_only=True,
+    mode='max',
+    verbose=1
+)
+
+history = model.fit(
+    X_train,
+    y_train,
+    batch_size=32,
+    epochs=200,
+    validation_data=(X_val, y_val),
+    callbacks=[early_stopping, model_checkpoint],
+    verbose=1
+)
+
+
+
+model.load_weights("best_inception_model.keras")
+
+val_loss, val_accuracy = model.evaluate(X_val, y_val, verbose=0)
+test_loss, test_accuracy = model.evaluate(X_test, y_test, verbose=0)
+
+print(f"\nValidation accuracy: {val_accuracy * 100:.2f}%")
+print(f"Test accuracy: {test_accuracy * 100:.2f}%")
+
+
+
+tf.keras.models.save_model(model, "/kaggle/working/final_InceptionV3_model.keras")
+print("Model saved successfully.")
