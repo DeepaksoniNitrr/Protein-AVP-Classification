@@ -16,6 +16,19 @@ Models:
 - ENNAVIA C – ResNet50 + CBAM
 - ENNAVIA D – ResNet50 + CBAM
 
-- The notebooks contain preprocessing, spectrogram generation, model training and evaluation.
-Note: Some notebooks may not render directly in GitHub due to their size and embedded outputs.
-Please download the `.ipynb` files and open them in Jupyter Notebook / JupyterLab to view all plots and results.
+  # Protein AVP Classification
+
+This repository contains the implementation codes used in the study on viral protein classification using signal processing and deep learning techniques.
+
+Four experimental models were developed and evaluated:
+
+ENNAVIA A – InceptionV3 with spectrogram representations based on rhythm and dynamics mapping.
+
+ENNAVIA B – InceptionV3 combined with SE attention mechanism using pI (isoelectric point) based spectrogram mapping.
+
+ENNAVIA C – ResNet50 integrated with CBAM attention using molecular mass based spectrogram mapping.
+
+ENNAVIA D – ResNet50 with CBAM attention using an alternative molecular mass based spectrogram configuration.
+
+The provided code files contain the core Python implementation used for preprocessing, spectrogram generation, model training, and evaluation during experimentation.
+.
